@@ -1,0 +1,5 @@
+{
+  "name": "FractalTask",
+  "description": "A recursive, column-based task management board that allows infinite nesting of tasks. Features automatic completion propagation and AI-powered subtask generation.",
+  "requestFramePermissions": []
+}
