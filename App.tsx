@@ -3,6 +3,7 @@ import { Plus, Layout } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { Task, TaskMap, AppState } from './types';
 import { TaskColumn } from './components/TaskColumn';
+import { ConfirmationModal } from './components/ConfirmationModal';
 
 // Initial state persistence helper
 const loadState = (): AppState => {
@@ -34,6 +35,7 @@ const loadState = (): AppState => {
 
 const App: React.FC = () => {
   const [state, setState] = useState<AppState>(loadState);
+  const [taskToDelete, setTaskToDelete] = useState<string | null>(null);
 
   // Persistence effect
   useEffect(() => {
@@ -76,8 +78,6 @@ const App: React.FC = () => {
       };
 
       // When adding a new task to a completed parent, parent becomes incomplete
-      // unless we want new tasks to be auto-completed (unlikely).
-      // So we must uncheck parent and bubble up.
       
       const updatedTasks = {
         ...prev.tasks,
@@ -113,14 +113,7 @@ const App: React.FC = () => {
       const newCompleted = !task.completed;
       const tasksCopy = { ...prev.tasks };
 
-      // 1. Update the task itself
-      // 2. If turning ON: Turn ON all descendants? Or just the task?
-      //    UX: Usually checking a parent checks all children. 
-      //    If turning OFF: Uncheck all children? Or just task?
-      //    Prompt: "When grandson tasks all completed, child task also completed."
-      //    This implies bottom-up automation.
-      //    Let's implement: Toggling a task forces all descendants to match that state.
-      
+      // 1. Update the task itself and all descendants
       const updateDescendants = (id: string, status: boolean) => {
         const t = tasksCopy[id];
         if (!t) return;
@@ -130,10 +123,7 @@ const App: React.FC = () => {
 
       updateDescendants(taskId, newCompleted);
 
-      // 3. Propagate changes UP (Bottom-Up Logic)
-      //    - If task is now Done, check if all siblings are done. If so, mark parent Done. Repeat.
-      //    - If task is now Not Done, mark parent Not Done. Repeat.
-
+      // 2. Propagate changes UP
       let currId: string | null = task.parentId;
       while (currId) {
         const parent = tasksCopy[currId];
@@ -145,13 +135,11 @@ const App: React.FC = () => {
           if (allChildrenComplete) {
              tasksCopy[currId] = { ...parent, completed: true };
           } else {
-             // If not all complete, parent must be incomplete (which it likely is)
              if (parent.completed) tasksCopy[currId] = { ...parent, completed: false };
-             else break; // No change to parent state, stop bubbling
+             else break; 
           }
         } else {
-          // If child is incomplete, parent MUST be incomplete
-          if (!parent.completed) break; // Already correct
+          if (!parent.completed) break; 
           tasksCopy[currId] = { ...parent, completed: false };
         }
         currId = parent.parentId;
@@ -161,7 +149,8 @@ const App: React.FC = () => {
     });
   }, []);
 
-  const deleteTask = useCallback((taskId: string) => {
+  // Internal function to actually perform deletion
+  const executeDeleteTask = useCallback((taskId: string) => {
     setState(prev => {
       const tasksCopy = { ...prev.tasks };
       const taskToDelete = tasksCopy[taskId];
@@ -176,7 +165,7 @@ const App: React.FC = () => {
       collect(taskId);
 
       // Remove from parent's children list
-      if (taskToDelete.parentId) {
+      if (taskToDelete?.parentId) {
         const parent = tasksCopy[taskToDelete.parentId];
         if (parent) {
           tasksCopy[parent.id] = {
@@ -184,11 +173,9 @@ const App: React.FC = () => {
             children: parent.children.filter(cid => cid !== taskId)
           };
           
-          // Re-evaluate parent completion? 
-          // If I delete the only incomplete child, parent becomes complete.
-          const newChildren = tasksCopy[parent.id].children; // Updated list
+          // Re-evaluate parent completion
+          const newChildren = tasksCopy[parent.id].children; 
           if (newChildren.length > 0 && newChildren.every(cid => tasksCopy[cid].completed)) {
-            // Propagate completion up
              let currId: string | null = parent.id;
              while(currId) {
                 const p = tasksCopy[currId];
@@ -226,6 +213,34 @@ const App: React.FC = () => {
     }));
   }, []);
 
+  // --- Modal Handlers ---
+
+  const initiateDelete = (taskId: string) => {
+    setTaskToDelete(taskId);
+  };
+
+  const confirmDelete = () => {
+    if (taskToDelete) {
+      executeDeleteTask(taskToDelete);
+      setTaskToDelete(null);
+    }
+  };
+
+  const cancelDelete = () => {
+    setTaskToDelete(null);
+  };
+
+  const getDeleteMessage = () => {
+    if (!taskToDelete) return "";
+    const task = state.tasks[taskToDelete];
+    const isProject = state.rootTaskIds.includes(taskToDelete);
+    
+    if (isProject) {
+      return `Are you sure you want to delete the project "${task?.title}"? This will permanently delete all tasks within it. This action cannot be undone.`;
+    }
+    return `Are you sure you want to delete "${task?.title}"? Any subtasks will also be permanently deleted.`;
+  };
+
   return (
     <div className="flex flex-col h-screen w-full bg-slate-50 text-slate-900">
       {/* Top Bar */}
@@ -258,13 +273,13 @@ const App: React.FC = () => {
               tasks={state.tasks}
               onAddTask={addTask}
               onToggleTask={toggleTask}
-              onDeleteTask={deleteTask}
+              onDeleteTask={initiateDelete}
               onUpdateTask={updateTask}
-              onDeleteRoot={deleteTask}
+              onDeleteRoot={initiateDelete}
             />
           ))}
           
-          {/* Add Column Placeholder/Button (Optional visual cue) */}
+          {/* Add Column Placeholder/Button */}
           <button 
             onClick={addRootTask}
             className="flex flex-col items-center justify-center h-[200px] w-[60px] rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 hover:bg-indigo-50/30 transition-all flex-shrink-0"
@@ -274,6 +289,15 @@ const App: React.FC = () => {
           </button>
         </div>
       </main>
+
+      {/* Delete Confirmation Modal */}
+      <ConfirmationModal 
+        isOpen={!!taskToDelete}
+        title="Delete Task"
+        message={getDeleteMessage()}
+        onConfirm={confirmDelete}
+        onClose={cancelDelete}
+      />
     </div>
   );
 };
