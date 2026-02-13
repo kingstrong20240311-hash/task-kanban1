@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import { ArrowLeft, Plus, MoreVertical, Layout, CheckCircle2, Pencil } from 'lucide-react';
 import { Task, TaskMap } from '../types';
 import { TaskItem } from './TaskItem';
-import { generateSubtasks } from '../services/geminiService';
 
 interface TaskColumnProps {
   rootId: string;
@@ -26,11 +25,12 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
   // Navigation stack: array of task IDs, starting with the rootId
   const [navStack, setNavStack] = useState<string[]>([rootId]);
   const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set());
   
   // Header editing state
   const [isEditingHeader, setIsEditingHeader] = useState(false);
   const [headerEditTitle, setHeaderEditTitle] = useState('');
+  const [headerEditDesc, setHeaderEditDesc] = useState('');
+  const headerContainerRef = useRef<HTMLDivElement>(null);
   const headerInputRef = useRef<HTMLInputElement>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -46,7 +46,6 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
   }, [isEditingHeader]);
 
   // If the root task is deleted externally, this component might receive undefined currentTask
-  // Handled by rendering nothing or a placeholder.
   if (!currentTask) return null;
 
   // Breadcrumbs logic
@@ -67,46 +66,35 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
     setNewTaskTitle('');
   };
 
-  const handleGenerateSubtasks = async (taskId: string) => {
-    if (generatingIds.has(taskId)) return;
-    
-    setGeneratingIds(prev => new Set(prev).add(taskId));
-    const targetTask = tasks[taskId];
-    
-    try {
-      const suggestions = await generateSubtasks(targetTask.title);
-      suggestions.forEach(title => {
-        onAddTask(taskId, title);
-      });
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setGeneratingIds(prev => {
-        const next = new Set(prev);
-        next.delete(taskId);
-        return next;
-      });
-    }
-  };
-
-  const handleTaskTitleUpdate = (id: string, newTitle: string) => {
-    onUpdateTask(id, { title: newTitle });
+  const handleTaskUpdate = (id: string, updates: Partial<Task>) => {
+    onUpdateTask(id, updates);
   };
 
   const startHeaderEdit = () => {
     setHeaderEditTitle(currentTask.title);
+    setHeaderEditDesc(currentTask.description || '');
     setIsEditingHeader(true);
   };
 
   const saveHeaderEdit = () => {
     if (headerEditTitle.trim()) {
-      onUpdateTask(currentViewId, { title: headerEditTitle.trim() });
+      onUpdateTask(currentViewId, { 
+        title: headerEditTitle.trim(),
+        description: headerEditDesc.trim() 
+      });
     }
     setIsEditingHeader(false);
   };
 
+  const handleHeaderBlur = (e: React.FocusEvent) => {
+    if (!headerContainerRef.current?.contains(e.relatedTarget as Node)) {
+      saveHeaderEdit();
+    }
+  };
+
   const handleHeaderKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && (e.target as HTMLElement).tagName === 'INPUT') {
+      // Allow saving on Enter if in title input
       saveHeaderEdit();
     } else if (e.key === 'Escape') {
       setIsEditingHeader(false);
@@ -154,32 +142,54 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
            )}
         </div>
 
-        <div className="flex items-start gap-2 group/header">
+        <div 
+          className="group/header" 
+          ref={headerContainerRef} 
+          onBlur={isEditingHeader ? handleHeaderBlur : undefined}
+        >
           {isEditingHeader ? (
-             <input 
-                ref={headerInputRef}
-                value={headerEditTitle}
-                onChange={(e) => setHeaderEditTitle(e.target.value)}
-                onBlur={saveHeaderEdit}
-                onKeyDown={handleHeaderKeyDown}
-                className="flex-1 text-xl font-bold text-slate-800 bg-white border border-indigo-300 rounded px-1 -ml-1 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-             />
+             <div className="flex flex-col gap-2">
+               <input 
+                  ref={headerInputRef}
+                  value={headerEditTitle}
+                  onChange={(e) => setHeaderEditTitle(e.target.value)}
+                  onKeyDown={handleHeaderKeyDown}
+                  className="w-full text-xl font-bold text-slate-800 bg-white border border-indigo-300 rounded px-1 -ml-1 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+               />
+               {!isRootView && (
+                 <textarea
+                   value={headerEditDesc}
+                   onChange={(e) => setHeaderEditDesc(e.target.value)}
+                   placeholder="Description..."
+                   className="w-full text-sm text-slate-600 bg-white border border-indigo-300 rounded px-1 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 resize-none min-h-[40px]"
+                 />
+               )}
+             </div>
           ) : (
-             <>
-               <h2 
-                 onClick={startHeaderEdit}
-                 className="text-xl font-bold text-slate-800 leading-tight break-words cursor-pointer hover:text-indigo-900 transition-colors flex-1"
-               >
-                 {currentTask.title}
-               </h2>
-               <button 
-                  onClick={startHeaderEdit}
-                  className="opacity-0 group-hover/header:opacity-100 text-slate-400 hover:text-indigo-600 p-1 transition-all"
-                  title="Edit title"
-               >
-                 <Pencil size={14} />
-               </button>
-             </>
+             <div>
+               <div className="flex items-start gap-2">
+                 <h2 
+                   onClick={startHeaderEdit}
+                   className="text-xl font-bold text-slate-800 leading-tight break-words cursor-pointer hover:text-indigo-900 transition-colors flex-1"
+                 >
+                   {currentTask.title}
+                 </h2>
+                 <button 
+                    onClick={startHeaderEdit}
+                    className="opacity-0 group-hover/header:opacity-100 text-slate-400 hover:text-indigo-600 p-1 transition-all"
+                    title="Edit title"
+                 >
+                   <Pencil size={14} />
+                 </button>
+               </div>
+               
+               {/* Show description in header if it exists and not in edit mode */}
+               {currentTask.description && !isRootView && (
+                 <p className="mt-1 text-sm text-slate-500 whitespace-pre-wrap leading-relaxed">
+                   {currentTask.description}
+                 </p>
+               )}
+             </div>
           )}
         </div>
         
@@ -217,9 +227,7 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
                  onToggle={onToggleTask}
                  onDelete={onDeleteTask}
                  onNavigate={handleNavigate}
-                 onGenerateSubtasks={handleGenerateSubtasks}
-                 onUpdate={handleTaskTitleUpdate}
-                 isGenerating={generatingIds.has(child.id)}
+                 onUpdate={handleTaskUpdate}
                />
              );
           })

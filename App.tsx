@@ -21,6 +21,7 @@ const loadState = (): AppState => {
       [rootId]: {
         id: rootId,
         title: "My First Project",
+        description: "",
         completed: false,
         children: [],
         parentId: null,
@@ -46,6 +47,7 @@ const App: React.FC = () => {
     const newTask: Task = {
       id,
       title: "New Project",
+      description: "",
       completed: false,
       children: [],
       parentId: null,
@@ -66,6 +68,7 @@ const App: React.FC = () => {
       const newTask: Task = {
         id: newId,
         title,
+        description: "",
         completed: false,
         children: [],
         parentId,

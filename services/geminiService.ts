@@ -1,17 +1,13 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { SubtaskSuggestion } from "../types";
 
-const apiKey = process.env.API_KEY || '';
-const ai = new GoogleGenAI({ apiKey });
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const generateSubtasks = async (taskTitle: string): Promise<SubtaskSuggestion[]> => {
   try {
     const prompt = `
       Break down the following task into 3 to 5 distinct, actionable, and concrete subtasks.
       Task: "${taskTitle}"
-      
-      Return ONLY a raw JSON array of strings. Do not include markdown formatting (like \`\`\`json).
-      Example output: ["Subtask 1", "Subtask 2", "Subtask 3"]
     `;
 
     const response = await ai.models.generateContent({
@@ -19,6 +15,12 @@ export const generateSubtasks = async (taskTitle: string): Promise<SubtaskSugges
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.STRING,
+          },
+        },
       }
     });
 
