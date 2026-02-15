@@ -102,7 +102,16 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
   };
 
   // Calculate progress for current view
-  const children = currentTask.children.map(id => tasks[id]).filter(Boolean);
+  // Sort tasks: incomplete first, completed last. 
+  // If status is same, preserve original order (stable sort/index order).
+  const children = currentTask.children
+    .map(id => tasks[id])
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (a.completed === b.completed) return 0;
+      return a.completed ? 1 : -1;
+    });
+
   const totalChildren = children.length;
   const completedChildren = children.filter(c => c.completed).length;
   const progress = totalChildren === 0 ? 0 : (completedChildren / totalChildren) * 100;
