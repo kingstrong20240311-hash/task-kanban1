@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Layout } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Plus, Layout, BarChart2 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
-import { Task, TaskMap, AppState } from './types';
+import { Task, TaskMap, AppState, CompletionRecord } from './types';
 import { TaskColumn } from './components/TaskColumn';
 import { ConfirmationModal } from './components/ConfirmationModal';
+import { PomodoroTimer } from './components/PomodoroTimer';
+import { StatisticsView } from './components/StatisticsView';
 
 // Initial state persistence helper
 const loadState = (): AppState => {
@@ -33,14 +35,41 @@ const loadState = (): AppState => {
   };
 };
 
+const loadCompletions = (): CompletionRecord[] => {
+  try {
+    const saved = localStorage.getItem('pomodoro-completions');
+    return saved ? JSON.parse(saved) : [];
+  } catch {
+    return [];
+  }
+};
+
 const App: React.FC = () => {
   const [state, setState] = useState<AppState>(loadState);
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null);
+  const [completions, setCompletions] = useState<CompletionRecord[]>(loadCompletions);
+  const [isStatsOpen, setIsStatsOpen] = useState(false);
 
-  // Persistence effect
+  // Ref so toggleTask can read the current tasks map without stale closure
+  const tasksRef = useRef(state.tasks);
+  useEffect(() => { tasksRef.current = state.tasks; }, [state.tasks]);
+
+  // Active pomodoro session number (null when no session running)
+  const activeSessionRef = useRef<number | null>(null);
+
+  // Persistence effects
   useEffect(() => {
     localStorage.setItem('fractal-task-state', JSON.stringify(state));
   }, [state]);
+
+  useEffect(() => {
+    localStorage.setItem('pomodoro-completions', JSON.stringify(completions));
+  }, [completions]);
+
+  // Called by PomodoroTimer whenever a work session starts or ends
+  const handleSessionChange = useCallback((sessionNumber: number | null) => {
+    activeSessionRef.current = sessionNumber;
+  }, []);
 
   // --- Actions ---
 
@@ -64,7 +93,7 @@ const App: React.FC = () => {
   const addTask = useCallback((parentId: string, title: string) => {
     setState(prev => {
       const parent = prev.tasks[parentId];
-      if (!parent) return prev; // Should not happen
+      if (!parent) return prev;
 
       const newId = uuidv4();
       const newTask: Task = {
@@ -77,31 +106,25 @@ const App: React.FC = () => {
         createdAt: Date.now()
       };
 
-      // When adding a new task to a completed parent, parent becomes incomplete
-      
       const updatedTasks = {
         ...prev.tasks,
         [newId]: newTask,
         [parentId]: {
           ...parent,
           children: [...parent.children, newId],
-          completed: false // Parent is now incomplete because it has a new incomplete child
+          completed: false
         }
       };
-      
-      // Propagate incomplete status up
+
       let currId: string | null = parent.parentId;
       while (currId) {
         const currTask = updatedTasks[currId];
-        if (!currTask.completed) break; // Already incomplete, stop
+        if (!currTask.completed) break;
         updatedTasks[currId] = { ...currTask, completed: false };
         currId = currTask.parentId;
       }
 
-      return {
-        ...prev,
-        tasks: updatedTasks
-      };
+      return { ...prev, tasks: updatedTasks };
     });
   }, []);
 
@@ -113,7 +136,6 @@ const App: React.FC = () => {
       const newCompleted = !task.completed;
       const tasksCopy = { ...prev.tasks };
 
-      // 1. Update the task itself and all descendants
       const updateDescendants = (id: string, status: boolean) => {
         const t = tasksCopy[id];
         if (!t) return;
@@ -123,23 +145,21 @@ const App: React.FC = () => {
 
       updateDescendants(taskId, newCompleted);
 
-      // 2. Propagate changes UP
       let currId: string | null = task.parentId;
       while (currId) {
         const parent = tasksCopy[currId];
         if (!parent) break;
 
         if (newCompleted) {
-          // Check if all siblings are complete
           const allChildrenComplete = parent.children.every(cid => tasksCopy[cid].completed);
           if (allChildrenComplete) {
-             tasksCopy[currId] = { ...parent, completed: true };
+            tasksCopy[currId] = { ...parent, completed: true };
           } else {
-             if (parent.completed) tasksCopy[currId] = { ...parent, completed: false };
-             else break; 
+            if (parent.completed) tasksCopy[currId] = { ...parent, completed: false };
+            else break;
           }
         } else {
-          if (!parent.completed) break; 
+          if (!parent.completed) break;
           tasksCopy[currId] = { ...parent, completed: false };
         }
         currId = parent.parentId;
@@ -149,13 +169,31 @@ const App: React.FC = () => {
     });
   }, []);
 
+  // Wrapper that records a completion record before delegating to toggleTask
+  const handleToggleTask = useCallback((taskId: string) => {
+    const task = tasksRef.current[taskId];
+    if (task && !task.completed) {
+      // Task is about to become complete — record it
+      setCompletions(prev => [
+        ...prev,
+        {
+          id: uuidv4(),
+          taskId,
+          taskTitle: task.title,
+          completedAt: Date.now(),
+          sessionNumber: activeSessionRef.current,
+        },
+      ]);
+    }
+    toggleTask(taskId);
+  }, [toggleTask]);
+
   // Internal function to actually perform deletion
   const executeDeleteTask = useCallback((taskId: string) => {
     setState(prev => {
       const tasksCopy = { ...prev.tasks };
       const taskToDelete = tasksCopy[taskId];
-      
-      // Helper to recursively collect all ids to delete
+
       const idsToDelete = new Set<string>();
       const collect = (id: string) => {
         idsToDelete.add(id);
@@ -164,7 +202,6 @@ const App: React.FC = () => {
       };
       collect(taskId);
 
-      // Remove from parent's children list
       if (taskToDelete?.parentId) {
         const parent = tasksCopy[taskToDelete.parentId];
         if (parent) {
@@ -172,28 +209,24 @@ const App: React.FC = () => {
             ...parent,
             children: parent.children.filter(cid => cid !== taskId)
           };
-          
-          // Re-evaluate parent completion
-          const newChildren = tasksCopy[parent.id].children; 
+
+          const newChildren = tasksCopy[parent.id].children;
           if (newChildren.length > 0 && newChildren.every(cid => tasksCopy[cid].completed)) {
-             let currId: string | null = parent.id;
-             while(currId) {
-                const p = tasksCopy[currId];
-                if(p.children.every(c => tasksCopy[c].completed)) {
-                    tasksCopy[currId] = {...p, completed: true};
-                    currId = p.parentId;
-                } else {
-                    break;
-                }
-             }
+            let currId: string | null = parent.id;
+            while (currId) {
+              const p = tasksCopy[currId];
+              if (p.children.every(c => tasksCopy[c].completed)) {
+                tasksCopy[currId] = { ...p, completed: true };
+                currId = p.parentId;
+              } else {
+                break;
+              }
+            }
           }
         }
       }
 
-      // Delete the tasks
-      idsToDelete.forEach(id => {
-        delete tasksCopy[id];
-      });
+      idsToDelete.forEach(id => { delete tasksCopy[id]; });
 
       return {
         ...prev,
@@ -244,7 +277,7 @@ const App: React.FC = () => {
     if (!taskToDelete) return "";
     const task = state.tasks[taskToDelete];
     const isProject = state.rootTaskIds.includes(taskToDelete);
-    
+
     if (isProject) {
       return `Are you sure you want to delete the project "${task?.title}"? This will permanently delete all tasks within it. This action cannot be undone.`;
     }
@@ -263,14 +296,26 @@ const App: React.FC = () => {
             Fractal<span className="text-indigo-600">Task</span>
           </h1>
         </div>
-        
-        <button 
-          onClick={addRootTask}
-          className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg font-medium text-sm transition-all shadow-md active:scale-95"
-        >
-          <Plus size={18} />
-          <span>New Project</span>
-        </button>
+
+        <div className="flex items-center gap-3">
+          {/* Statistics button */}
+          <button
+            onClick={() => setIsStatsOpen(true)}
+            className="flex items-center gap-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 px-3 py-2 rounded-lg font-medium text-sm transition-all"
+            title="Today's statistics"
+          >
+            <BarChart2 size={18} />
+            <span className="hidden sm:inline">Statistics</span>
+          </button>
+
+          <button
+            onClick={addRootTask}
+            className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg font-medium text-sm transition-all shadow-md active:scale-95"
+          >
+            <Plus size={18} />
+            <span>New Project</span>
+          </button>
+        </div>
       </header>
 
       {/* Main Board Area */}
@@ -282,16 +327,16 @@ const App: React.FC = () => {
               rootId={rootId}
               tasks={state.tasks}
               onAddTask={addTask}
-              onToggleTask={toggleTask}
+              onToggleTask={handleToggleTask}
               onDeleteTask={initiateDelete}
               onUpdateTask={updateTask}
               onDeleteRoot={initiateDelete}
               onReorderTasks={reorderTasks}
             />
           ))}
-          
+
           {/* Add Column Placeholder/Button */}
-          <button 
+          <button
             onClick={addRootTask}
             className="flex flex-col items-center justify-center h-[200px] w-[60px] rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 hover:bg-indigo-50/30 transition-all flex-shrink-0"
             title="Add another project column"
@@ -302,12 +347,25 @@ const App: React.FC = () => {
       </main>
 
       {/* Delete Confirmation Modal */}
-      <ConfirmationModal 
+      <ConfirmationModal
         isOpen={!!taskToDelete}
         title="Delete Task"
         message={getDeleteMessage()}
         onConfirm={confirmDelete}
         onClose={cancelDelete}
+      />
+
+      {/* Pomodoro Timer (floating) */}
+      <PomodoroTimer
+        completions={completions}
+        onSessionChange={handleSessionChange}
+      />
+
+      {/* Statistics View */}
+      <StatisticsView
+        isOpen={isStatsOpen}
+        onClose={() => setIsStatsOpen(false)}
+        completions={completions}
       />
     </div>
   );

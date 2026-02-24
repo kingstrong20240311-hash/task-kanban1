@@ -19,3 +19,11 @@ export interface AppState {
 }
 
 export type SubtaskSuggestion = string;
+
+export interface CompletionRecord {
+  id: string;
+  taskId: string;
+  taskTitle: string;
+  completedAt: number; // ms timestamp
+  sessionNumber: number | null; // active pomodoro session when completed
+}
