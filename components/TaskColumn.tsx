@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ArrowLeft, Plus, MoreVertical, Layout, CheckCircle2, Pencil } from 'lucide-react';
+import { ArrowLeft, Plus, MoreVertical, Layout, CheckCircle2, Pencil, RefreshCw, FileText } from 'lucide-react';
 import { Task, TaskMap } from '../types';
 import { TaskItem } from './TaskItem';
 
@@ -30,8 +30,11 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
   const [isEditingHeader, setIsEditingHeader] = useState(false);
   const [headerEditTitle, setHeaderEditTitle] = useState('');
   const [headerEditDesc, setHeaderEditDesc] = useState('');
+  const [isProjectBack, setIsProjectBack] = useState(false);
+  const [projectDescriptionDraft, setProjectDescriptionDraft] = useState('');
   const headerContainerRef = useRef<HTMLDivElement>(null);
   const headerInputRef = useRef<HTMLInputElement>(null);
+  const projectDescriptionRef = useRef<HTMLTextAreaElement>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -44,6 +47,24 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
       headerInputRef.current.focus();
     }
   }, [isEditingHeader]);
+
+  useEffect(() => {
+    if (navStack.length !== 1 && isProjectBack) {
+      setIsProjectBack(false);
+    }
+  }, [isProjectBack, navStack.length]);
+
+  useEffect(() => {
+    if (navStack.length === 1) {
+      setProjectDescriptionDraft(currentTask.description || '');
+    }
+  }, [currentTask.description, navStack.length]);
+
+  useEffect(() => {
+    if (isProjectBack && projectDescriptionRef.current) {
+      projectDescriptionRef.current.focus();
+    }
+  }, [isProjectBack]);
 
   // If the root task is deleted externally, this component might receive undefined currentTask
   if (!currentTask) return null;
@@ -78,10 +99,14 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
 
   const saveHeaderEdit = () => {
     if (headerEditTitle.trim()) {
-      onUpdateTask(currentViewId, { 
-        title: headerEditTitle.trim(),
-        description: headerEditDesc.trim() 
-      });
+      if (isRootView) {
+        onUpdateTask(currentViewId, { title: headerEditTitle.trim() });
+      } else {
+        onUpdateTask(currentViewId, { 
+          title: headerEditTitle.trim(),
+          description: headerEditDesc.trim() 
+        });
+      }
     }
     setIsEditingHeader(false);
   };
@@ -101,6 +126,12 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
     }
   };
 
+  const saveProjectDescription = () => {
+    onUpdateTask(currentViewId, {
+      description: projectDescriptionDraft.trim()
+    });
+  };
+
   // Calculate progress for current view
   // Sort tasks: incomplete first, completed last. 
   // If status is same, preserve original order (stable sort/index order).
@@ -118,6 +149,56 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
 
   // Root task specific styles vs nested styles
   const isRootView = navStack.length === 1;
+
+  const renderTaskList = () => (
+    <div className="h-full overflow-y-auto p-3 custom-scrollbar">
+      {children.length === 0 ? (
+        <div className="h-full flex flex-col items-center justify-center text-slate-300 text-sm space-y-2 pb-12">
+          <CheckCircle2 size={32} strokeWidth={1.5} className="opacity-20" />
+          <p>No tasks yet</p>
+        </div>
+      ) : (
+        children.map(child => {
+          const subChildIds = child.children || [];
+          const subCompleted = subChildIds.map(id => tasks[id]?.completed).filter(Boolean).length;
+          return (
+            <TaskItem
+              key={child.id}
+              task={child}
+              childCount={subChildIds.length}
+              completedCount={subCompleted}
+              onToggle={onToggleTask}
+              onDelete={onDeleteTask}
+              onNavigate={handleNavigate}
+              onUpdate={handleTaskUpdate}
+            />
+          );
+        })
+      )}
+    </div>
+  );
+
+  const renderAddTask = () => (
+    <div className="p-3 border-t border-slate-100 bg-slate-50/50">
+      <form onSubmit={handleAddTaskSubmit} className="relative">
+        <input
+          ref={inputRef}
+          type="text"
+          placeholder="Add a new task..."
+          className="w-full pl-3 pr-10 py-2.5 bg-white border border-slate-200 rounded-lg text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+          value={newTaskTitle}
+          onChange={(e) => setNewTaskTitle(e.target.value)}
+        />
+        <button 
+          type="submit"
+          disabled={!newTaskTitle.trim()}
+          className="absolute right-1.5 top-1.5 p-1.5 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 transition-all shadow-sm"
+        >
+          <Plus size={16} />
+        </button>
+      </form>
+    </div>
+  );
 
   return (
     <div className="flex flex-col h-full w-[360px] flex-shrink-0 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden transition-all duration-300">
@@ -141,13 +222,22 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
            )}
            
            {isRootView && (
-             <button 
-                onClick={() => onDeleteRoot(rootId)} 
-                className="text-slate-300 hover:text-red-500 transition-colors"
-                title="Delete Project"
-             >
-               <MoreVertical size={16} />
-             </button>
+             <div className="flex items-center gap-1">
+               <button
+                 onClick={() => setIsProjectBack(prev => !prev)}
+                 className={`p-1 rounded-md transition-colors ${isProjectBack ? 'text-indigo-600 bg-indigo-50' : 'text-slate-400 hover:text-indigo-600 hover:bg-slate-100'}`}
+                 title={isProjectBack ? 'Show task list' : 'Show project description'}
+               >
+                 <RefreshCw size={15} />
+               </button>
+               <button 
+                  onClick={() => onDeleteRoot(rootId)} 
+                  className="text-slate-300 hover:text-red-500 transition-colors"
+                  title="Delete Project"
+               >
+                 <MoreVertical size={16} />
+               </button>
+             </div>
            )}
         </div>
 
@@ -193,7 +283,7 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
                </div>
                
                {/* Show description in header if it exists and not in edit mode */}
-               {currentTask.description && !isRootView && (
+               {!isRootView && currentTask.description && (
                  <p className="mt-1 text-sm text-slate-500 whitespace-pre-wrap leading-relaxed">
                    {currentTask.description}
                  </p>
@@ -216,53 +306,44 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
         </div>
       </div>
 
-      {/* Task List */}
-      <div className="flex-1 overflow-y-auto p-3 custom-scrollbar">
-        {children.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-slate-300 text-sm space-y-2 pb-12">
-            <CheckCircle2 size={32} strokeWidth={1.5} className="opacity-20" />
-            <p>No tasks yet</p>
+      {isRootView ? (
+        <div className="flex-1 min-h-0 p-3 [perspective:1200px]">
+          <div className={`relative h-full transition-transform duration-500 [transform-style:preserve-3d] ${isProjectBack ? '[transform:rotateY(180deg)]' : ''}`}>
+            <div className={`absolute inset-0 flex flex-col bg-white rounded-xl border border-slate-100 [backface-visibility:hidden] transition-opacity duration-200 ${isProjectBack ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+              {renderTaskList()}
+              {renderAddTask()}
+            </div>
+            <div className={`absolute inset-0 flex flex-col bg-slate-50/40 rounded-xl border border-slate-100 p-4 [transform:rotateY(180deg)] [backface-visibility:hidden] transition-opacity duration-200 ${isProjectBack ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+              <div className="flex items-center gap-2 text-slate-500 mb-3">
+                <FileText size={16} />
+                <span className="text-xs font-semibold uppercase tracking-wider">Project Description</span>
+              </div>
+              <textarea
+                ref={projectDescriptionRef}
+                value={projectDescriptionDraft}
+                onChange={(e) => setProjectDescriptionDraft(e.target.value)}
+                onBlur={saveProjectDescription}
+                placeholder="Write your project description..."
+                className="flex-1 w-full text-sm leading-relaxed text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 resize-none"
+              />
+              <div className="mt-3 flex items-center justify-between text-xs text-slate-400">
+                <span>Click outside to save</span>
+                <button
+                  onClick={saveProjectDescription}
+                  className="px-3 py-1.5 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
           </div>
-        ) : (
-          children.map(child => {
-             const subChildIds = child.children || [];
-             const subCompleted = subChildIds.map(id => tasks[id]?.completed).filter(Boolean).length;
-             return (
-               <TaskItem
-                 key={child.id}
-                 task={child}
-                 childCount={subChildIds.length}
-                 completedCount={subCompleted}
-                 onToggle={onToggleTask}
-                 onDelete={onDeleteTask}
-                 onNavigate={handleNavigate}
-                 onUpdate={handleTaskUpdate}
-               />
-             );
-          })
-        )}
-      </div>
-
-      {/* Footer Add Task */}
-      <div className="p-3 border-t border-slate-100 bg-slate-50/50">
-        <form onSubmit={handleAddTaskSubmit} className="relative">
-          <input
-            ref={inputRef}
-            type="text"
-            placeholder="Add a new task..."
-            className="w-full pl-3 pr-10 py-2.5 bg-white border border-slate-200 rounded-lg text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-            value={newTaskTitle}
-            onChange={(e) => setNewTaskTitle(e.target.value)}
-          />
-          <button 
-            type="submit"
-            disabled={!newTaskTitle.trim()}
-            className="absolute right-1.5 top-1.5 p-1.5 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 transition-all shadow-sm"
-          >
-            <Plus size={16} />
-          </button>
-        </form>
-      </div>
+        </div>
+      ) : (
+        <>
+          {renderTaskList()}
+          {renderAddTask()}
+        </>
+      )}
     </div>
   );
 };
