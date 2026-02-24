@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Check, ChevronRight, Trash2, Pencil } from 'lucide-react';
+import { Check, ChevronRight, Trash2, Pencil, GripVertical } from 'lucide-react';
 import { Task } from '../types';
 
 interface TaskItemProps {
@@ -10,6 +10,9 @@ interface TaskItemProps {
   onDelete: (id: string) => void;
   onNavigate: (id: string) => void;
   onUpdate: (id: string, updates: Partial<Task>) => void;
+  isDragging?: boolean;
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
 }
 
 export const TaskItem: React.FC<TaskItemProps> = ({
@@ -19,7 +22,10 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   onToggle,
   onDelete,
   onNavigate,
-  onUpdate
+  onUpdate,
+  isDragging,
+  onDragStart,
+  onDragEnd,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(task.title);
@@ -105,20 +111,36 @@ export const TaskItem: React.FC<TaskItemProps> = ({
     e.stopPropagation();
   };
 
+  const handleDragStartEvent = (e: React.DragEvent) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', task.id);
+    onDragStart?.();
+  };
+
   return (
-    <div 
+    <div
       ref={containerRef}
+      draggable={!isEditing}
+      onDragStart={handleDragStartEvent}
+      onDragEnd={onDragEnd}
       onBlur={isEditing ? handleContainerBlur : undefined}
       onClick={() => !isEditing && onNavigate(task.id)}
       className={`
-        group flex items-start justify-between p-3 mb-2 rounded-lg border 
+        group flex items-start justify-between p-3 mb-2 rounded-lg border
         transition-all duration-200 cursor-pointer hover:shadow-md
-        ${task.completed 
-          ? 'bg-slate-50 border-slate-200' 
+        ${isDragging ? 'opacity-40' : ''}
+        ${task.completed
+          ? 'bg-slate-50 border-slate-200'
           : 'bg-white border-slate-200 hover:border-indigo-300'
         }
       `}
     >
+      {/* Drag handle */}
+      {!isEditing && (
+        <div className="flex-shrink-0 self-center mr-1 text-slate-300 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing -ml-0.5">
+          <GripVertical size={14} />
+        </div>
+      )}
       <div className="flex items-start gap-3 flex-1 min-w-0">
         {/* Checkbox */}
         <button

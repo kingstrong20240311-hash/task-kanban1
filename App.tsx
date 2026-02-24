@@ -213,6 +213,16 @@ const App: React.FC = () => {
     }));
   }, []);
 
+  const reorderTasks = useCallback((parentId: string, newChildIds: string[]) => {
+    setState(prev => ({
+      ...prev,
+      tasks: {
+        ...prev.tasks,
+        [parentId]: { ...prev.tasks[parentId], children: newChildIds }
+      }
+    }));
+  }, []);
+
   // --- Modal Handlers ---
 
   const initiateDelete = (taskId: string) => {
@@ -276,6 +286,7 @@ const App: React.FC = () => {
               onDeleteTask={initiateDelete}
               onUpdateTask={updateTask}
               onDeleteRoot={initiateDelete}
+              onReorderTasks={reorderTasks}
             />
           ))}
           
