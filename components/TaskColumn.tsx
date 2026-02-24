@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ArrowLeft, Plus, MoreVertical, Layout, CheckCircle2, Pencil } from 'lucide-react';
 import { Task, TaskMap } from '../types';
 import { TaskItem } from './TaskItem';
@@ -11,6 +11,7 @@ interface TaskColumnProps {
   onDeleteTask: (id: string) => void;
   onUpdateTask: (id: string, updates: Partial<Task>) => void;
   onDeleteRoot: (id: string) => void;
+  onReorderTasks: (parentId: string, newChildIds: string[]) => void;
 }
 
 export const TaskColumn: React.FC<TaskColumnProps> = ({
@@ -20,12 +21,13 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
   onToggleTask,
   onDeleteTask,
   onUpdateTask,
-  onDeleteRoot
+  onDeleteRoot,
+  onReorderTasks,
 }) => {
   // Navigation stack: array of task IDs, starting with the rootId
   const [navStack, setNavStack] = useState<string[]>([rootId]);
   const [newTaskTitle, setNewTaskTitle] = useState('');
-  
+
   // Header editing state
   const [isEditingHeader, setIsEditingHeader] = useState(false);
   const [headerEditTitle, setHeaderEditTitle] = useState('');
@@ -34,6 +36,11 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
   const headerInputRef = useRef<HTMLInputElement>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Drag-and-drop state
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   // The ID of the task currently being viewed (top of stack)
   const currentViewId = navStack[navStack.length - 1];
@@ -100,6 +107,86 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
       setIsEditingHeader(false);
     }
   };
+
+  // --- Drag-and-drop handlers ---
+
+  const handleDragStart = useCallback((id: string) => {
+    setDraggedId(id);
+    setDropIndex(null);
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    setDraggedId(null);
+    setDropIndex(null);
+  }, []);
+
+  const handleListDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (!draggedId || !listRef.current) return;
+
+    const items = listRef.current.querySelectorAll<HTMLElement>('[data-drag-index]');
+    const mouseY = e.clientY;
+
+    // Default: insert after all items
+    let newIndex = items.length;
+    for (let i = 0; i < items.length; i++) {
+      const rect = items[i].getBoundingClientRect();
+      if (mouseY < rect.top + rect.height / 2) {
+        newIndex = parseInt(items[i].dataset.dragIndex!, 10);
+        break;
+      }
+    }
+
+    // Constrain drop to within the same completion group
+    const draggedTask = tasks[draggedId];
+    if (draggedTask) {
+      const incompleteCount = items.length > 0
+        ? Array.from(items).filter(el => el.dataset.completed === 'false').length
+        : 0;
+      if (!draggedTask.completed) {
+        newIndex = Math.min(newIndex, incompleteCount);
+      } else {
+        newIndex = Math.max(newIndex, incompleteCount);
+      }
+    }
+
+    setDropIndex(prev => prev === newIndex ? prev : newIndex);
+  }, [draggedId, tasks]);
+
+  const handleListDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setDropIndex(null);
+    }
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    if (!draggedId || dropIndex === null) {
+      handleDragEnd();
+      return;
+    }
+
+    // `children` is already the sorted display order at this point
+    // We read it via the DOM items to get the ordered IDs
+    const items = listRef.current
+      ? Array.from(listRef.current.querySelectorAll<HTMLElement>('[data-drag-index]'))
+      : [];
+    const sortedIds = items.map(el => el.dataset.taskId!);
+
+    const dragIndex = sortedIds.indexOf(draggedId);
+    if (dragIndex === -1 || dropIndex === dragIndex || dropIndex === dragIndex + 1) {
+      handleDragEnd();
+      return;
+    }
+
+    const newOrder = [...sortedIds];
+    const [dragged] = newOrder.splice(dragIndex, 1);
+    const insertAt = dropIndex > dragIndex ? dropIndex - 1 : dropIndex;
+    newOrder.splice(insertAt, 0, dragged);
+
+    onReorderTasks(currentViewId, newOrder);
+    handleDragEnd();
+  }, [draggedId, dropIndex, currentViewId, onReorderTasks, handleDragEnd]);
 
   // Calculate progress for current view
   // Sort tasks: incomplete first, completed last. 
@@ -217,29 +304,55 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
       </div>
 
       {/* Task List */}
-      <div className="flex-1 overflow-y-auto p-3 custom-scrollbar">
+      <div
+        ref={listRef}
+        className="flex-1 overflow-y-auto p-3 custom-scrollbar"
+        onDragOver={handleListDragOver}
+        onDrop={handleDrop}
+        onDragLeave={handleListDragLeave}
+      >
         {children.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-slate-300 text-sm space-y-2 pb-12">
             <CheckCircle2 size={32} strokeWidth={1.5} className="opacity-20" />
             <p>No tasks yet</p>
           </div>
         ) : (
-          children.map(child => {
-             const subChildIds = child.children || [];
-             const subCompleted = subChildIds.map(id => tasks[id]?.completed).filter(Boolean).length;
-             return (
-               <TaskItem
-                 key={child.id}
-                 task={child}
-                 childCount={subChildIds.length}
-                 completedCount={subCompleted}
-                 onToggle={onToggleTask}
-                 onDelete={onDeleteTask}
-                 onNavigate={handleNavigate}
-                 onUpdate={handleTaskUpdate}
-               />
-             );
-          })
+          <>
+            {children.map((child, i) => {
+              const subChildIds = child.children || [];
+              const subCompleted = subChildIds.map(id => tasks[id]?.completed).filter(Boolean).length;
+              const isDragging = draggedId === child.id;
+              return (
+                <div
+                  key={child.id}
+                  data-drag-index={i}
+                  data-task-id={child.id}
+                  data-completed={String(child.completed)}
+                >
+                  {/* Drop indicator above this item */}
+                  {dropIndex === i && !isDragging && (
+                    <div className="h-0.5 bg-indigo-500 rounded-full -mt-1 mb-1.5 mx-0.5" />
+                  )}
+                  <TaskItem
+                    task={child}
+                    childCount={subChildIds.length}
+                    completedCount={subCompleted}
+                    onToggle={onToggleTask}
+                    onDelete={onDeleteTask}
+                    onNavigate={handleNavigate}
+                    onUpdate={handleTaskUpdate}
+                    isDragging={isDragging}
+                    onDragStart={() => handleDragStart(child.id)}
+                    onDragEnd={handleDragEnd}
+                  />
+                </div>
+              );
+            })}
+            {/* Drop indicator at end of list */}
+            {dropIndex === children.length && draggedId !== null && (
+              <div className="h-0.5 bg-indigo-500 rounded-full mt-0.5 mx-0.5" />
+            )}
+          </>
         )}
       </div>
 
