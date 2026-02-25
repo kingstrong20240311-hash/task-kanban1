@@ -106,7 +106,7 @@ export const PomodoroTimer: React.FC<PomodoroTimerProps> = ({ completions, onSes
         newCount % SESSIONS_BEFORE_LONG_BREAK === 0 ? 'long-break' : 'short-break';
       setPhase(nextPhase);
       setTimeRemaining(PHASE_DURATION[nextPhase]);
-      setIsRunning(true); // auto-start the break
+      setIsRunning(false); // wait for manual start
       setSessionStartedAt(null);
       onSessionChange(null);
     } else {
