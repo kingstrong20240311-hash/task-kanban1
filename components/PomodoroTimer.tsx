@@ -58,11 +58,47 @@ export const PomodoroTimer: React.FC<PomodoroTimerProps> = ({ completions, onSes
   const [currentSessionNumber, setCurrentSessionNumber] = useState(0);
   const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
   // Ref so the interval always sees latest handlers without capturing stale closures
   const phaseCompleteRef = useRef<() => void>(() => {});
 
+  const playNotificationSound = () => {
+    const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+
+    if (!audioContextRef.current) {
+      audioContextRef.current = new AudioCtx();
+    }
+
+    const ctx = audioContextRef.current;
+    if (ctx.state === 'suspended') {
+      void ctx.resume();
+    }
+
+    const now = ctx.currentTime;
+    const notes = [880, 660];
+    notes.forEach((frequency, index) => {
+      const startAt = now + index * 0.18;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(frequency, startAt);
+      gain.gain.setValueAtTime(0.0001, startAt);
+      gain.gain.exponentialRampToValueAtTime(0.18, startAt + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.16);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(startAt);
+      osc.stop(startAt + 0.16);
+    });
+  };
+
   const handlePhaseComplete = () => {
+    playNotificationSound();
+
     if (phase === 'work') {
       const newCount = completedWorkSessions + 1;
       setCompletedWorkSessions(newCount);
@@ -81,6 +117,16 @@ export const PomodoroTimer: React.FC<PomodoroTimerProps> = ({ completions, onSes
     }
   };
   phaseCompleteRef.current = handlePhaseComplete;
+
+  useEffect(
+    () => () => {
+      if (audioContextRef.current) {
+        void audioContextRef.current.close();
+        audioContextRef.current = null;
+      }
+    },
+    [],
+  );
 
   // Countdown interval
   useEffect(() => {
