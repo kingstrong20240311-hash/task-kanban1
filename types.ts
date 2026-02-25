@@ -15,7 +15,8 @@ export interface TaskMap {
 // Using a normalized state structure for easier updates
 export interface AppState {
   tasks: TaskMap;
-  rootTaskIds: string[];
+  rootTaskIds: string[]; // top-level project IDs
+  rootThreadIds: string[]; // top-level thread IDs
 }
 
 export type SubtaskSuggestion = string;

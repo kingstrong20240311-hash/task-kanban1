@@ -6,23 +6,27 @@ import { TaskItem } from './TaskItem';
 interface TaskColumnProps {
   rootId: string;
   tasks: TaskMap;
+  panelType: 'project' | 'thread';
   onAddTask: (parentId: string, title: string) => void;
   onToggleTask: (id: string) => void;
   onDeleteTask: (id: string) => void;
   onUpdateTask: (id: string, updates: Partial<Task>) => void;
   onDeleteRoot: (id: string) => void;
   onReorderTasks: (parentId: string, newChildIds: string[]) => void;
+  onSendToThread?: (taskId: string) => void;
 }
 
 export const TaskColumn: React.FC<TaskColumnProps> = ({
   rootId,
   tasks,
+  panelType,
   onAddTask,
   onToggleTask,
   onDeleteTask,
   onUpdateTask,
   onDeleteRoot,
   onReorderTasks,
+  onSendToThread,
 }) => {
   // Navigation stack: array of task IDs, starting with the rootId
   const [navStack, setNavStack] = useState<string[]>([rootId]);
@@ -233,6 +237,10 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
 
   // Root task specific styles vs nested styles
   const isRootView = navStack.length === 1;
+  const isProjectPanel = panelType === 'project';
+  const panelLabel = isProjectPanel ? 'Project' : 'Thread';
+  const descriptionLabel = isProjectPanel ? 'Project Description' : 'Thread Description';
+  const descriptionPlaceholder = isProjectPanel ? 'Write your project description...' : 'Write your thread description...';
 
   const renderTaskList = () => (
     <div
@@ -275,6 +283,7 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
                   isDragging={isDragging}
                   onDragStart={() => handleDragStart(child.id)}
                   onDragEnd={handleDragEnd}
+                  onSendToThread={isProjectPanel ? onSendToThread : undefined}
                 />
               </div>
             );
@@ -319,7 +328,7 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
            {isRootView ? (
              <div className="flex items-center gap-2 text-slate-500">
                 <Layout size={16} />
-                <span className="text-xs font-semibold uppercase tracking-wider">Project</span>
+                <span className="text-xs font-semibold uppercase tracking-wider">{panelLabel}</span>
              </div>
            ) : (
              <button
@@ -341,9 +350,9 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
                  <RefreshCw size={15} />
                </button>
                <button
-                  onClick={() => onDeleteRoot(rootId)}
+                 onClick={() => onDeleteRoot(rootId)}
                   className="text-slate-300 hover:text-red-500 transition-colors"
-                  title="Delete Project"
+                  title={`Delete ${panelLabel}`}
                >
                  <MoreVertical size={16} />
                </button>
@@ -426,14 +435,14 @@ export const TaskColumn: React.FC<TaskColumnProps> = ({
             <div className={`absolute inset-0 flex flex-col bg-slate-50/40 rounded-xl border border-slate-100 p-4 [transform:rotateY(180deg)] [backface-visibility:hidden] transition-opacity duration-200 ${isProjectBack ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
               <div className="flex items-center gap-2 text-slate-500 mb-3">
                 <FileText size={16} />
-                <span className="text-xs font-semibold uppercase tracking-wider">Project Description</span>
+                <span className="text-xs font-semibold uppercase tracking-wider">{descriptionLabel}</span>
               </div>
               <textarea
                 ref={projectDescriptionRef}
                 value={projectDescriptionDraft}
                 onChange={(e) => setProjectDescriptionDraft(e.target.value)}
                 onBlur={saveProjectDescription}
-                placeholder="Write your project description..."
+                placeholder={descriptionPlaceholder}
                 className="flex-1 w-full text-sm leading-relaxed text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 resize-none"
               />
               <div className="mt-3 flex items-center justify-between text-xs text-slate-400">

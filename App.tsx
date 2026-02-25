@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Layout, BarChart2 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
-import { Task, TaskMap, AppState, CompletionRecord } from './types';
+import { Task, AppState, CompletionRecord } from './types';
 import { TaskColumn } from './components/TaskColumn';
 import { ConfirmationModal } from './components/ConfirmationModal';
 import { PomodoroTimer } from './components/PomodoroTimer';
@@ -12,18 +12,57 @@ const loadState = (): AppState => {
   const saved = localStorage.getItem('fractal-task-state');
   if (saved) {
     try {
-      return JSON.parse(saved);
+      const parsed = JSON.parse(saved) as Partial<AppState>;
+      const savedTasks = parsed.tasks || {};
+      const savedRootTaskIds = parsed.rootTaskIds || [];
+      const savedRootThreadIds = parsed.rootThreadIds || [];
+
+      if (savedRootThreadIds.length > 0) {
+        return {
+          tasks: savedTasks,
+          rootTaskIds: savedRootTaskIds,
+          rootThreadIds: savedRootThreadIds,
+        };
+      }
+
+      const threadId = uuidv4();
+      return {
+        tasks: {
+          ...savedTasks,
+          [threadId]: {
+            id: threadId,
+            title: "My First Thread",
+            description: "",
+            completed: false,
+            children: [],
+            parentId: null,
+            createdAt: Date.now()
+          }
+        },
+        rootTaskIds: savedRootTaskIds,
+        rootThreadIds: [threadId],
+      };
     } catch (e) {
       console.error("Failed to parse saved state", e);
     }
   }
   // Default Initial State
-  const rootId = uuidv4();
+  const projectRootId = uuidv4();
+  const threadRootId = uuidv4();
   return {
     tasks: {
-      [rootId]: {
-        id: rootId,
+      [projectRootId]: {
+        id: projectRootId,
         title: "My First Project",
+        description: "",
+        completed: false,
+        children: [],
+        parentId: null,
+        createdAt: Date.now()
+      },
+      [threadRootId]: {
+        id: threadRootId,
+        title: "My First Thread",
         description: "",
         completed: false,
         children: [],
@@ -31,7 +70,8 @@ const loadState = (): AppState => {
         createdAt: Date.now()
       }
     },
-    rootTaskIds: [rootId]
+    rootTaskIds: [projectRootId],
+    rootThreadIds: [threadRootId],
   };
 };
 
@@ -49,6 +89,7 @@ const App: React.FC = () => {
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null);
   const [completions, setCompletions] = useState<CompletionRecord[]>(loadCompletions);
   const [isStatsOpen, setIsStatsOpen] = useState(false);
+  const [activePanel, setActivePanel] = useState<'project' | 'thread'>('project');
 
   // Ref so toggleTask can read the current tasks map without stale closure
   const tasksRef = useRef(state.tasks);
@@ -73,7 +114,7 @@ const App: React.FC = () => {
 
   // --- Actions ---
 
-  const addRootTask = () => {
+  const addRootProject = () => {
     const id = uuidv4();
     const newTask: Task = {
       id,
@@ -87,6 +128,24 @@ const App: React.FC = () => {
     setState(prev => ({
       tasks: { ...prev.tasks, [id]: newTask },
       rootTaskIds: [...prev.rootTaskIds, id]
+    }));
+  };
+
+  const addRootThread = () => {
+    const id = uuidv4();
+    const newTask: Task = {
+      id,
+      title: "New Thread",
+      description: "",
+      completed: false,
+      children: [],
+      parentId: null,
+      createdAt: Date.now()
+    };
+    setState(prev => ({
+      ...prev,
+      tasks: { ...prev.tasks, [id]: newTask },
+      rootThreadIds: [...prev.rootThreadIds, id]
     }));
   };
 
@@ -188,6 +247,57 @@ const App: React.FC = () => {
     toggleTask(taskId);
   }, [toggleTask]);
 
+  const addTaskToThread = useCallback((taskId: string) => {
+    setState(prev => {
+      const sourceTask = prev.tasks[taskId];
+      if (!sourceTask) return prev;
+
+      const tasksCopy = { ...prev.tasks };
+      let rootThreadIds = [...prev.rootThreadIds];
+      let targetThreadId = rootThreadIds[0];
+
+      if (!targetThreadId) {
+        targetThreadId = uuidv4();
+        tasksCopy[targetThreadId] = {
+          id: targetThreadId,
+          title: "New Thread",
+          description: "",
+          completed: false,
+          children: [],
+          parentId: null,
+          createdAt: Date.now()
+        };
+        rootThreadIds = [targetThreadId];
+      }
+
+      const targetThread = tasksCopy[targetThreadId];
+      if (!targetThread) return prev;
+
+      const newId = uuidv4();
+      tasksCopy[newId] = {
+        id: newId,
+        title: sourceTask.title,
+        description: sourceTask.description || '',
+        completed: false,
+        children: [],
+        parentId: targetThreadId,
+        createdAt: Date.now()
+      };
+
+      tasksCopy[targetThreadId] = {
+        ...targetThread,
+        completed: false,
+        children: [...targetThread.children, newId],
+      };
+
+      return {
+        ...prev,
+        tasks: tasksCopy,
+        rootThreadIds
+      };
+    });
+  }, []);
+
   // Internal function to actually perform deletion
   const executeDeleteTask = useCallback((taskId: string) => {
     setState(prev => {
@@ -231,7 +341,8 @@ const App: React.FC = () => {
       return {
         ...prev,
         tasks: tasksCopy,
-        rootTaskIds: prev.rootTaskIds.filter(id => id !== taskId)
+        rootTaskIds: prev.rootTaskIds.filter(id => id !== taskId),
+        rootThreadIds: prev.rootThreadIds.filter(id => id !== taskId)
       };
     });
   }, []);
@@ -277,9 +388,13 @@ const App: React.FC = () => {
     if (!taskToDelete) return "";
     const task = state.tasks[taskToDelete];
     const isProject = state.rootTaskIds.includes(taskToDelete);
+    const isThread = state.rootThreadIds.includes(taskToDelete);
 
     if (isProject) {
       return `Are you sure you want to delete the project "${task?.title}"? This will permanently delete all tasks within it. This action cannot be undone.`;
+    }
+    if (isThread) {
+      return `Are you sure you want to delete the thread "${task?.title}"? This will permanently delete all tasks within it. This action cannot be undone.`;
     }
     return `Are you sure you want to delete "${task?.title}"? Any subtasks will also be permanently deleted.`;
   };
@@ -308,42 +423,109 @@ const App: React.FC = () => {
             <span className="hidden sm:inline">Statistics</span>
           </button>
 
-          <button
-            onClick={addRootTask}
-            className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg font-medium text-sm transition-all shadow-md active:scale-95"
-          >
-            <Plus size={18} />
-            <span>New Project</span>
-          </button>
+          <div className="flex items-center rounded-lg border border-slate-200 p-1 bg-slate-50">
+            <button
+              onClick={() => setActivePanel('project')}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                activePanel === 'project'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Project
+            </button>
+            <button
+              onClick={() => setActivePanel('thread')}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                activePanel === 'thread'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Thread
+            </button>
+          </div>
         </div>
       </header>
 
       {/* Main Board Area */}
-      <main className="flex-1 overflow-x-auto overflow-y-hidden">
-        <div className="h-full flex items-start gap-6 p-6 min-w-max">
-          {state.rootTaskIds.map(rootId => (
-            <TaskColumn
-              key={rootId}
-              rootId={rootId}
-              tasks={state.tasks}
-              onAddTask={addTask}
-              onToggleTask={handleToggleTask}
-              onDeleteTask={initiateDelete}
-              onUpdateTask={updateTask}
-              onDeleteRoot={initiateDelete}
-              onReorderTasks={reorderTasks}
-            />
-          ))}
-
-          {/* Add Column Placeholder/Button */}
-          <button
-            onClick={addRootTask}
-            className="flex flex-col items-center justify-center h-[200px] w-[60px] rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 hover:bg-indigo-50/30 transition-all flex-shrink-0"
-            title="Add another project column"
-          >
-            <Plus size={24} />
-          </button>
-        </div>
+      <main className="flex-1 overflow-hidden p-6">
+        {activePanel === 'project' ? (
+          <section className="h-full min-h-0 flex flex-col border border-slate-200 rounded-2xl bg-white/50">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+              <h2 className="text-sm font-semibold tracking-wide text-slate-700 uppercase">Task Panel</h2>
+              <button
+                onClick={addRootProject}
+                className="text-xs font-medium text-indigo-600 hover:text-indigo-700 transition-colors"
+              >
+                + Add Project
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden">
+              <div className="h-full flex items-start gap-6 p-4 min-w-max">
+                {state.rootTaskIds.map(rootId => (
+                  <TaskColumn
+                    key={rootId}
+                    rootId={rootId}
+                    panelType="project"
+                    tasks={state.tasks}
+                    onAddTask={addTask}
+                    onToggleTask={handleToggleTask}
+                    onDeleteTask={initiateDelete}
+                    onUpdateTask={updateTask}
+                    onDeleteRoot={initiateDelete}
+                    onReorderTasks={reorderTasks}
+                    onSendToThread={addTaskToThread}
+                  />
+                ))}
+                <button
+                  onClick={addRootProject}
+                  className="flex flex-col items-center justify-center h-[200px] w-[60px] rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 hover:border-indigo-300 hover:text-indigo-500 hover:bg-indigo-50/30 transition-all flex-shrink-0"
+                  title="Add another project column"
+                >
+                  <Plus size={24} />
+                </button>
+              </div>
+            </div>
+          </section>
+        ) : (
+          <section className="h-full min-h-0 flex flex-col border border-indigo-100 rounded-2xl bg-indigo-50/20">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-indigo-100">
+              <h2 className="text-sm font-semibold tracking-wide text-indigo-700 uppercase">Thread Panel</h2>
+              <button
+                onClick={addRootThread}
+                className="text-xs font-medium text-indigo-600 hover:text-indigo-700 transition-colors"
+              >
+                + Add Thread
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden">
+              <div className="h-full flex items-start gap-6 p-4 min-w-max">
+                {state.rootThreadIds.map(rootId => (
+                  <TaskColumn
+                    key={rootId}
+                    rootId={rootId}
+                    panelType="thread"
+                    tasks={state.tasks}
+                    onAddTask={addTask}
+                    onToggleTask={handleToggleTask}
+                    onDeleteTask={initiateDelete}
+                    onUpdateTask={updateTask}
+                    onDeleteRoot={initiateDelete}
+                    onReorderTasks={reorderTasks}
+                  />
+                ))}
+                <button
+                  onClick={addRootThread}
+                  className="flex flex-col items-center justify-center h-[200px] w-[60px] rounded-2xl border-2 border-dashed border-indigo-200 text-indigo-300 hover:border-indigo-300 hover:text-indigo-500 hover:bg-indigo-50/30 transition-all flex-shrink-0"
+                  title="Add another thread column"
+                >
+                  <Plus size={24} />
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
       </main>
 
       {/* Delete Confirmation Modal */}

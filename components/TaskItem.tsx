@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Check, ChevronRight, Trash2, Pencil, GripVertical } from 'lucide-react';
+import { Check, ChevronRight, Trash2, Pencil, GripVertical, ArrowRightToLine } from 'lucide-react';
 import { Task } from '../types';
 
 interface TaskItemProps {
@@ -13,6 +13,7 @@ interface TaskItemProps {
   isDragging?: boolean;
   onDragStart?: () => void;
   onDragEnd?: () => void;
+  onSendToThread?: (id: string) => void;
 }
 
 export const TaskItem: React.FC<TaskItemProps> = ({
@@ -26,6 +27,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   isDragging,
   onDragStart,
   onDragEnd,
+  onSendToThread,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(task.title);
@@ -54,6 +56,11 @@ export const TaskItem: React.FC<TaskItemProps> = ({
     setIsEditing(true);
     setEditTitle(task.title);
     setEditDescription(task.description || '');
+  };
+
+  const handleSendToThread = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onSendToThread?.(task.id);
   };
 
   const handleSave = () => {
@@ -204,6 +211,15 @@ export const TaskItem: React.FC<TaskItemProps> = ({
       </div>
 
       <div className={`flex items-start gap-1 transition-opacity ${isEditing ? 'opacity-0' : 'opacity-0 group-hover:opacity-100'}`}>
+        {onSendToThread && (
+          <button
+            onClick={handleSendToThread}
+            className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
+            title="Add to thread"
+          >
+            <ArrowRightToLine size={16} />
+          </button>
+        )}
         {/* Edit */}
         <button 
           onClick={handleEditClick}
